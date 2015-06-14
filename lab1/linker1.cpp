@@ -3,10 +3,29 @@
 #include<stdlib.h>
 #include<string.h>
 #include "token.cpp"
+#include <list>
+#include <map>
+#include<vector>
 
 using namespace std;
-int g_line_num = 1, g_column_num = 1, fileSize = 0;int totallength = 0;
+int g_line_num = 1, g_column_num = 1, fileSize = 0;int totallength;
 ifstream myFile;
+
+struct Symbol {
+	int linenumber;
+	int columnnumber;
+	int modulebaseAddress;
+	int relativeAddress;
+	string sym;
+	int modulelength;
+	int tokenaddress;
+	bool isMultiple;
+	int modulecount;
+};
+
+vector<Symbol> symbol_table;
+map<string,int> symbol_map;
+
 
 Token<char*> getNextToken(){
       char ch;
@@ -49,7 +68,6 @@ Token<char*> getNextToken(){
         token[index++] = ch;
       }
 
-	//cout << "token is at line "<< g_line_num << " column " << g_column_num << " token is " << tokenStartLine << " " << tokenStartColumn << endl;
       Token<char*> t(tokenStartLine, tokenStartColumn, token, length);
 	  return t;
     }
@@ -71,11 +89,11 @@ Token<int> getCount(bool isDefinitionList){
 	}
 	return Token<int>(t.getLineNumber(), t.getColumnNumber(), count, t.getLength());
 }
-Token<char*> getSymbol() {
+Symbol getSymbol() {
 	Token<char*> t = getNextToken();
-	string symbol = t.getValue();
+	string symbl = t.getValue();
 	int length = t.getLength();
-	
+		
 	if (length == 0 ){
 		cout << "Parse Error line" <<" "<< t.getLineNumber() <<" "<< "offset" <<" "<< t.getColumnNumber() <<": "<< "SYM_EXPECTED"<< endl;
 		exit(99);
@@ -84,11 +102,19 @@ Token<char*> getSymbol() {
 		cout << "Parse Error line" <<" "<< t.getLineNumber() <<" "<< "offset" <<" "<< t.getColumnNumber() <<": "<<"SYM_TOLONG"<< endl;
 		exit(99);
 	}
-	char ch = symbol.at(0);
+	char ch = symbl.at(0);
 	if( !((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z')) ){
 		cout << "Parse Error line" <<" "<< t.getLineNumber() <<" "<< "offset" <<" "<< t.getColumnNumber() <<": "<< "SYM_EXPECTED"<< endl;
 		exit(99);
 	}
+	struct Symbol s;
+	s.linenumber = t.getLineNumber();
+	s.columnnumber = t.getColumnNumber();
+	s.sym = t.getValue();
+	s.isMultiple = false;
+	
+	return s;
+	
 }
 
 Token<char*> getAddressing (){
@@ -115,26 +141,51 @@ Token<int> getInst (){
 	}	
 	
 }
-int getOpcode(int inst){
-	return inst/1000;	
+int getOpcode(string inst){
+	char *temp;
+	int i = strtol(inst.c_str(), &temp, 10);
+	cout << i << endl;
+	return i/1000;	
 	
 }
 int getOperand(int inst){
 	return inst%1000;	
 }
 	
-void readDefList() {
-	Token<int> count = getCount(true);//TODO getCount for deflist count will pass true.  Other places in getCount will pass false
+void readDefList(int modulecount) {
+	Token<int> count = getCount(true);
+	Symbol symbol;
 	int value = count.getValue();
 	if (value>16){
 		cout << "Parse Error line" <<" "<< count.getLineNumber() <<" "<< "offset" <<" "<< count.getColumnNumber() <<": "<< "TO_MANY_DEF_IN_MODULE" << endl;
 		exit(99);
 	}
+	
+		
 	for(int i = 0; i < value; i++){
-		Token<char*> symbol = getSymbol();
+		int tokenaddress,numMod;
+		symbol = getSymbol();
 		Token<int> count_add = getCount(false);
-		//push_to_symbol_table(symbol, address);
+		int count_value = count_add.getValue();
+		symbol.relativeAddress = count_value;
+		tokenaddress = totallength+count_value;
+		symbol.tokenaddress = tokenaddress;
+		symbol.modulebaseAddress = totallength;
+		symbol.modulecount = modulecount;
+		//cout << "Address of the symbol" << " " << symbol.sym << " " << "is: " << tokenaddress << endl;
+		//push_to_symbol_table(symbol.sym, tokenaddress);
+		
+		
+		if(symbol_map.count(symbol.sym) > 0){
+			int m = symbol_map[symbol.sym];
+			symbol_table.at(m).isMultiple = true;
 		}
+		else{
+			symbol_map.insert(pair<string, int>(symbol.sym, symbol_table.size()));
+			symbol.isMultiple = false;
+			symbol_table.push_back(symbol);
+		}
+	}	
 }
 	
 		
@@ -147,51 +198,54 @@ void readUseList() {
 		exit(99); 
 	}
 	for (int j = 0 ; j < value ; j++){
-		Token<char*> symbol = getSymbol();
+		Symbol symbol = getSymbol();
 	}
 }
-	
 	
 Token<int> readInstList() {
 	Token<int> count = getCount(false);
 	int value = count.getValue();
-	int modulelength = 0;
+	if (totallength+value >512){
+		cout << "Parse Error line" <<" "<< count.getLineNumber() <<" "<< "offset" <<" "<< count.getColumnNumber()<<": "<< "TO_MANY_INSTR" << endl;
+		exit(99);
+	}
+	totallength += value;
 	for(int k =0; k < value; k++) {
 		Token<char*> addressing = getAddressing();	
 		Token<int> inst = getInst();
-		int operand = getOperand(inst.getValue());
-		int opcode = getOpcode(inst.getValue());		}
-		
+	//	int operand = getOperand(inst.getValue());
+		//int opcode = getOpcode(inst.getValue());		
+		}
 		return count;
-	
+		
 	}
 	
 	int firstpass() {
-		int count;
-		int length ;
+		int modulecount = 1;
+		
 		while(!myFile.eof()) {
-			readDefList();
+			readDefList(modulecount);
 			if(myFile.eof()){
-			exit(99);
+				break;
 			}
 			readUseList();
-			Token<int> count = readInstList();
-			length = count.getValue();
-		totallength = totallength + length;
-		if (totallength > 512){
-		cout << "Parse Error line" <<" "<< count.getLineNumber() <<" "<< "offset" <<" "<< count.getColumnNumber()<<": "<< "TO_MANY_INSTR" << endl;
-		exit(99);
-		}
+			Token<int> count = readInstList();	
+			int modlength = count.getValue();	
 			
-		//	modulenum++;
-			
-		//	map[modulenum]  =  modulelength;
-						
+			vector<Symbol>::iterator i;
+			for (i=symbol_table.begin(); i != symbol_table.end(); i++){
+				if (i->modulecount == modulecount){
+				if (i->relativeAddress > modlength){
+					cout << "Warning: Module" << " " << i->modulecount << " " << i->sym << " " << "to big" << " " << i->relativeAddress << " " << "(max=" << modlength - 1 << ") " << "assume zero relative" << endl;
+					i->relativeAddress = 0;
+				}	 
+				}
+				
+			}	
+			modulecount++;			
 		}	
 	}
 	
-	
-
 int main(int argc, char* argv[]) 
 {
 	if(argc !=2)
@@ -210,9 +264,14 @@ int main(int argc, char* argv[])
 	}
 	
 	
-	firstpass();		
-		
-		
-		//Token t = getNextToken();
-		//cout << "Token: " << t.value << " line number: " << t.linenumber << " lineoffset: " << t.columnnumber << endl;
+	firstpass();
+	vector<Symbol>::iterator i;
+	for (i=symbol_table.begin(); i != symbol_table.end(); i++){
+		if (i->isMultiple==false){
+			cout << i->sym << "=" << i->relativeAddress+i->modulebaseAddress << endl;
+		}
+		else{
+		   cout << i->sym << "=" << i->relativeAddress+i->modulebaseAddress << " " << "Error: This variable is multiple times defined; first value used" << endl;
+	   	}
+	}	 
 }
